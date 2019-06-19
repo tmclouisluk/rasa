@@ -1,3 +1,5 @@
+import datetime
+import glob
 import logging
 import os
 import tempfile
@@ -5,6 +7,7 @@ import traceback
 from functools import wraps
 from inspect import isawaitable
 from typing import Any, Callable, List, Optional, Text, Union
+import json
 
 from sanic import Sanic, response
 from sanic.request import Request
@@ -332,9 +335,21 @@ def create_app(
     @ensure_loaded_agent(app)
     async def status(request: Request):
         """Respond with the model name and the fingerprint of that model."""
-
+        model_path = DEFAULT_MODELS_PATH
+        list_model_dir = [fn for fn in glob.glob(os.path.join(model_path, '*')) if os.path.isdir(fn)]
+        list_of_files = []
+        for path in list_model_dir:
+            files = glob.glob(os.path.join(path, "*.tar.gz"))
+            for f in files:
+                date = os.path.getmtime(f)
+                list_of_files.append(dict(
+                    name=f,
+                    date=datetime.datetime.fromtimestamp(date)
+                ))
+        #print(list_model_dir, list_of_files)
         return response.json(
             {
+                "model_list": list_of_files,
                 "model_file": app.agent.model_directory,
                 "fingerprint": fingerprint_from_path(app.agent.model_directory),
             }
@@ -599,13 +614,20 @@ def create_app(
         # create a temporary directory to store config, domain and
         # training data
         temp_dir = tempfile.mkdtemp()
+        print(temp_dir)
 
         config_path = os.path.join(temp_dir, "config.yml")
         dump_obj_as_str_to_file(config_path, rjs["config"])
 
-        if "nlu" in rjs:
+        if "nlu_md" in rjs:
             nlu_path = os.path.join(temp_dir, "nlu.md")
-            dump_obj_as_str_to_file(nlu_path, rjs["nlu"])
+            dump_obj_as_str_to_file(nlu_path, rjs["nlu_md"])
+
+        if "nlu_json" in rjs:
+            nlu_path = os.path.join(temp_dir, "trainingdata.json")
+            nlu_json = rjs["nlu_json"]
+            with open(nlu_path, 'w', encoding='utf-8') as outfile:
+                json.dump(nlu_json, outfile)
 
         if "stories" in rjs:
             stories_path = os.path.join(temp_dir, "stories.md")
@@ -633,6 +655,7 @@ def create_app(
             )
         except Exception as e:
             logger.debug(traceback.format_exc())
+            print(e)
             raise ErrorResponse(
                 500,
                 "TrainingError",
@@ -648,13 +671,13 @@ def create_app(
                 {"parameter": "config", "in": "body"},
             )
 
-        if "nlu" not in rjs and "stories" not in rjs:
+        if "nlu_md" not in rjs and "nlu_json" not in rjs and "stories" not in rjs:
             raise ErrorResponse(
                 400,
                 "BadRequest",
                 "To train a Rasa model you need to specify at least one type of "
                 "training data. Add `nlu` and/or `stories` to the request.",
-                {"parameters": ["nlu", "stories"], "in": "body"},
+                {"parameters": ["nlu_md", "nlu_json", "stories"], "in": "body"},
             )
 
         if "stories" in rjs and "domain" not in rjs:
@@ -799,6 +822,12 @@ def create_app(
 
         try:
             data = emulator.normalise_request_json(request.json)
+            if 'model' in request.json:
+                app.agent = await _load_agent(
+                    model_path=request.json.get("model", None), endpoints=endpoints
+                )
+                logger.debug("Successfully loaded model '{}'.".format(request.json.get("model", None)))
+
             parse_data = await app.agent.interpreter.parse(data.get("text"))
             response_data = emulator.normalise_response_json(parse_data)
 
