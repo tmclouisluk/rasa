@@ -197,15 +197,17 @@ class KafkaProducer(EventChannel):
 
     def _create_producer(self):
         import kafka
+        print(self.host)
 
         if self.security_protocol == "SASL_PLAINTEXT":
             self.producer = kafka.KafkaProducer(
                 bootstrap_servers=[self.host],
-                value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-                sasl_plain_username=self.sasl_username,
-                sasl_plain_password=self.sasl_password,
-                sasl_mechanism="PLAIN",
-                security_protocol=self.security_protocol,
+                api_version=(0, 10, 0),
+                #value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+                #sasl_plain_username=self.sasl_username,
+               # sasl_plain_password=self.sasl_password,
+                #sasl_mechanism="PLAIN",
+               # security_protocol=self.security_protocol,
             )
         elif self.security_protocol == "SSL":
             self.producer = kafka.KafkaProducer(
@@ -219,7 +221,12 @@ class KafkaProducer(EventChannel):
             )
 
     def _publish(self, event):
-        self.producer.send(self.topic, event)
+        e = json.dumps(event).encode("utf-8")
+        print("Sending", self.topic, e)
+        self.producer.send(self.topic, e)
+        #self.producer.flush()
+        #self.producer.send(self.topic, key=b'my_key', value=b'my_value')
+        print("OK", self.topic, e)
 
     def _close(self):
         self.producer.close()
